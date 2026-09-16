@@ -1,10 +1,11 @@
 # =========================================================================
-# 🎤 VocalPickPick RunPod GPU Worker Handler (handler.py)
+# 🎤 VocalPickPick RunPod GPU Worker Handler (handler.py - 30초 미리보기 최적화 버전)
 # =========================================================================
 
 import os
 import subprocess
 import gc
+import json
 import requests
 import torch
 import numpy as np
@@ -174,10 +175,13 @@ def handler(event):
         for chunk in res.iter_content(chunk_size=8192):
             f.write(chunk)
 
-    # 2. 30초 미리보기 모드 처리
+    # 2. 30초 미리보기 모드 처리 (전주 구간을 피해 30초 지점부터 30초만 추출하여 고속 처리)
     if mode == "preview_30s":
-        # 오디오 추출 및 30초 커팅
-        subprocess.run(["ffmpeg", "-y", "-i", input_file, "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", "preview_raw.wav"], check=True)
+        subprocess.run([
+            "ffmpeg", "-y", "-ss", "00:00:30", "-i", input_file, "-t", "30", 
+            "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", "preview_raw.wav"
+        ], check=True)
+        
         vocal_file, mr_file = run_mdx_separation("preview_raw.wav", output_dir="separated_preview")
         extract_and_process_vocal(vocal_file, "preview_clean.wav", "preview_tuned.wav")
         apply_vocal_master("preview_tuned.wav", "preview_vocal.wav", reverb_ratio)
@@ -211,7 +215,6 @@ def handler(event):
         return {"status": "success", "output_file": final_url}
 
     # 비디오 풀영상 렌더링
-    # (해상도 및 ASS 자막 합성 로직)
     cmd_dim = ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "json", input_file]
     probe = subprocess.check_output(cmd_dim).decode("utf-8")
     data = json.loads(probe)
