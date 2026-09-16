@@ -1,9 +1,22 @@
 # =========================================================================
-# 🎤 VocalPickPick RunPod GPU Worker Handler (Safety Debug Version)
+# 🎤 VocalPickPick RunPod GPU Worker Handler (Auto-Install & Safety Version)
 # =========================================================================
 
-import os
 import subprocess
+import sys
+import os
+
+print("📦 RunPod GPU 필수 패키지 환경 확인 및 자동 설치 중...")
+required_packages = ["audio-separator", "noisereduce", "pyloudnorm", "librosa", "soundfile", "runpod"]
+for package in required_packages:
+    pip_name = package
+    import_name = package.replace("-", "_")
+    try:
+        __import__(import_name)
+    except ImportError:
+        print(f"📥 누락된 패키지 설치 중: {pip_name}")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", pip_name])
+
 import gc
 import json
 import traceback
