@@ -1,11 +1,12 @@
 # =========================================================================
-# 🎤 VocalPickPick RunPod GPU Worker Handler (handler.py - 30초 미리보기 최적화 버전)
+# 🎤 VocalPickPick RunPod GPU Worker Handler (Safety Debug Version)
 # =========================================================================
 
 import os
 import subprocess
 import gc
 import json
+import traceback
 import requests
 import torch
 import numpy as np
@@ -156,90 +157,98 @@ def smart_mix(vocal_file, mr_file, output_file):
     return output_file
 
 def handler(event):
-    inp = event.get("input", {})
-    media_url = inp.get("media_url")
-    mode = inp.get("mode", "video_full")
-    reverb_ratio = float(inp.get("reverb_ratio", 70.0))
-    height_pct = float(inp.get("height_pct", 0.0))
-    title1 = inp.get("title1", "")
-    title2 = inp.get("title2", "")
-    title3 = inp.get("title3", "")
+    try:
+        inp = event.get("input", {})
+        media_url = inp.get("media_url")
+        mode = inp.get("mode", "video_full")
+        reverb_ratio = float(inp.get("reverb_ratio", 70.0))
+        height_pct = float(inp.get("height_pct", 0.0))
+        title1 = inp.get("title1", "")
+        title2 = inp.get("title2", "")
+        title3 = inp.get("title3", "")
 
-    if not media_url:
-        return {"status": "error", "message": "media_url is missing"}
+        if not media_url:
+            return {"status": "error", "message": "media_url is missing"}
 
-    # 1. 원본 파일 다운로드
-    input_file = "input_media.mp4"
-    res = requests.get(media_url, stream=True)
-    with open(input_file, "wb") as f:
-        for chunk in res.iter_content(chunk_size=8192):
-            f.write(chunk)
+        # 1. 원본 파일 다운로드
+        input_file = "input_media.mp4"
+        res = requests.get(media_url, stream=True)
+        with open(input_file, "wb") as f:
+            for chunk in res.iter_content(chunk_size=8192):
+                f.write(chunk)
 
-    # 2. 30초 미리보기 모드 처리 (전주 구간을 피해 30초 지점부터 30초만 추출하여 고속 처리)
-    if mode == "preview_30s":
-        subprocess.run([
-            "ffmpeg", "-y", "-ss", "00:00:30", "-i", input_file, "-t", "30", 
-            "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", "preview_raw.wav"
-        ], check=True)
+        # 2. 30초 미리보기 모드 처리 (30초~60초 구간 고정 추출)
+        if mode == "preview_30s":
+            subprocess.run([
+                "ffmpeg", "-y", "-ss", "00:00:30", "-i", input_file, "-t", "30", 
+                "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", "preview_raw.wav"
+            ], check=True)
+            
+            vocal_file, mr_file = run_mdx_separation("preview_raw.wav", output_dir="separated_preview")
+            extract_and_process_vocal(vocal_file, "preview_clean.wav", "preview_tuned.wav")
+            apply_vocal_master("preview_tuned.wav", "preview_vocal.wav", reverb_ratio)
+            apply_mr_master(mr_file, "preview_mr.wav")
+            smart_mix("preview_vocal.wav", "preview_mr.wav", "preview_mixed.wav")
+            
+            subprocess.run(["ffmpeg", "-y", "-i", "preview_mixed.wav", "-b:a", "320k", "preview_final.mp3"], check=True)
+            subprocess.run(["ffmpeg", "-y", "-i", "preview_raw.wav", "-b:a", "320k", "preview_before.mp3"], check=True)
+
+            url_before = upload_result_to_host("preview_before.mp3")
+            url_after = upload_result_to_host("preview_final.mp3")
+
+            return {
+                "status": "success",
+                "audio_before": url_before,
+                "output_file": url_after
+            }
+
+        # 3. 풀 오디오(MP3) 또는 풀 영상(MP4) 처리
+        subprocess.run(["ffmpeg", "-y", "-i", input_file, "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", "raw_audio.wav"], check=True)
+        vocal_file, mr_file = run_mdx_separation("raw_audio.wav", output_dir="separated_raw")
+        extract_and_process_vocal(vocal_file, "live_vocal_clean.wav", "live_vocal_tuned.wav")
+        apply_vocal_master("live_vocal_tuned.wav", "live_vocal.wav", reverb_ratio)
+        apply_mr_master(mr_file, "live_mr.wav")
+        smart_mix("live_vocal.wav", "live_mr.wav", "smart_mixed.wav")
+
+        if mode == "audio_only":
+            subprocess.run(["ffmpeg", "-y", "-i", "smart_mixed.wav", "-b:a", "320k", "final_output.mp3"], check=True)
+            final_url = upload_result_to_host("final_output.mp3")
+            return {"status": "success", "output_file": final_url}
+
+        # 비디오 풀영상 렌더링
+        cmd_dim = ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "json", input_file]
+        probe = subprocess.check_output(cmd_dim).decode("utf-8")
+        data = json.loads(probe)
+        vid_w = int(data["streams"][0]["width"])
+        vid_h = int(data["streams"][0]["height"])
+
+        styles = f"Style: Title2,NanumGothicExtraBold,72,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,105,100,0,0,3,4,0,8,25,25,180,1\n"
+        events = []
+        if title2: events.append(f"Dialogue: 0,0:00:00.00,9:59:59.00,Title2,,0,0,0,,{title2}")
+        events.append("Dialogue: 0,0:00:00.00,9:59:59.00,Title2,,0,0,0,,VocalPickPick")
         
-        vocal_file, mr_file = run_mdx_separation("preview_raw.wav", output_dir="separated_preview")
-        extract_and_process_vocal(vocal_file, "preview_clean.wav", "preview_tuned.wav")
-        apply_vocal_master("preview_tuned.wav", "preview_vocal.wav", reverb_ratio)
-        apply_mr_master(mr_file, "preview_mr.wav")
-        smart_mix("preview_vocal.wav", "preview_mr.wav", "preview_mixed.wav")
+        ass_content = f"[Script Info]\nScriptType: v4.00+\nPlayResX: {vid_w}\nPlayResY: {vid_h}\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n{styles}\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n" + "\n".join(events)
         
-        # 320kbps MP3로 인코딩
-        subprocess.run(["ffmpeg", "-y", "-i", "preview_mixed.wav", "-b:a", "320k", "preview_final.mp3"], check=True)
-        subprocess.run(["ffmpeg", "-y", "-i", "preview_raw.wav", "-b:a", "320k", "preview_before.mp3"], check=True)
+        with open("sub.ass", "w", encoding="utf-8") as f:
+            f.write(ass_content)
 
-        url_before = upload_result_to_host("preview_before.mp3")
-        url_after = upload_result_to_host("preview_final.mp3")
+        render_cmd = [
+            "ffmpeg", "-y", "-i", input_file, "-i", "smart_mixed.wav", "-vf", "ass=sub.ass",
+            "-map", "0:v:0", "-map", "1:a:0", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-c:a", "libmp3lame", "-b:a", "320k", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "final_output.mp4"
+        ]
+        subprocess.run(render_cmd, check=True)
 
-        return {
-            "status": "success",
-            "audio_before": url_before,
-            "output_file": url_after
-        }
-
-    # 3. 풀 오디오(MP3) 또는 풀 영상(MP4) 처리
-    subprocess.run(["ffmpeg", "-y", "-i", input_file, "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", "raw_audio.wav"], check=True)
-    vocal_file, mr_file = run_mdx_separation("raw_audio.wav", output_dir="separated_raw")
-    extract_and_process_vocal(vocal_file, "live_vocal_clean.wav", "live_vocal_tuned.wav")
-    apply_vocal_master("live_vocal_tuned.wav", "live_vocal.wav", reverb_ratio)
-    apply_mr_master(mr_file, "live_mr.wav")
-    smart_mix("live_vocal.wav", "live_mr.wav", "smart_mixed.wav")
-
-    if mode == "audio_only":
-        subprocess.run(["ffmpeg", "-y", "-i", "smart_mixed.wav", "-b:a", "320k", "final_output.mp3"], check=True)
-        final_url = upload_result_to_host("final_output.mp3")
+        final_url = upload_result_to_host("final_output.mp4")
         return {"status": "success", "output_file": final_url}
 
-    # 비디오 풀영상 렌더링
-    cmd_dim = ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "json", input_file]
-    probe = subprocess.check_output(cmd_dim).decode("utf-8")
-    data = json.loads(probe)
-    vid_w = int(data["streams"][0]["width"])
-    vid_h = int(data["streams"][0]["height"])
-
-    # 타이틀/자막 스타일 생성
-    styles = f"Style: Title2,NanumGothicExtraBold,72,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,105,100,0,0,3,4,0,8,25,25,180,1\n"
-    events = []
-    if title2: events.append(f"Dialogue: 0,0:00:00.00,9:59:59.00,Title2,,0,0,0,,{title2}")
-    events.append("Dialogue: 0,0:00:00.00,9:59:59.00,Title2,,0,0,0,,VocalPickPick")
-    
-    ass_content = f"[Script Info]\nScriptType: v4.00+\nPlayResX: {vid_w}\nPlayResY: {vid_h}\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n{styles}\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n" + "\n".join(events)
-    
-    with open("sub.ass", "w", encoding="utf-8") as f:
-        f.write(ass_content)
-
-    render_cmd = [
-        "ffmpeg", "-y", "-i", input_file, "-i", "smart_mixed.wav", "-vf", "ass=sub.ass",
-        "-map", "0:v:0", "-map", "1:a:0", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-        "-c:a", "libmp3lame", "-b:a", "320k", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "final_output.mp4"
-    ]
-    subprocess.run(render_cmd, check=True)
-
-    final_url = upload_result_to_host("final_output.mp4")
-    return {"status": "success", "output_file": final_url}
+    except Exception as e:
+        err_detail = traceback.format_exc()
+        print(f"❌ HANDLER CRASH TRACEBACK:\n{err_detail}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "traceback": err_detail
+        }
 
 runpod.serverless.start({"handler": handler})
