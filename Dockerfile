@@ -17,4 +17,8 @@ RUN pip install --no-cache-dir \
     onnxruntime-gpu
 
 WORKDIR /app
+
+# 핸들러 파일 및 소스코드를 컨테이너 안으로 복사
+COPY . .
+
 CMD ["python3", "-u", "handler.py"]
