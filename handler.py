@@ -9,9 +9,30 @@ print("🚀 VocalPickPick RunPod GPU Worker 초기화 완료")
 def download_file(url, save_path):
     print(f"📥 미디어 파일 다운로드 중: {url}")
     res = requests.get(url, stream=True)
+    
+    # HTTP 에러(404, 403 등) 발생 여부 체크
+    try:
+        res.raise_for_status()
+    except requests.exceptions.HTTPError as e:
+        print(f"❌ 다운로드 HTTP 에러 발생: {e}")
+        raise e
+
     with open(save_path, 'wb') as f:
         for chunk in res.iter_content(chunk_size=8192):
             f.write(chunk)
+            
+    # 파일 크기 및 내용 검증 (잘못된 링크나 에러 페이지가 다운로드되었는지 확인)
+    file_size = os.path.getsize(save_path)
+    print(f"📥 다운로드 완료 - 파일 크기: {file_size} bytes")
+    
+    if file_size < 5000:  # 파일이 너무 작다면 영상이 아니라 텍스트(에러 페이지 등)일 확률이 높음
+        try:
+            with open(save_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read(500)
+                print(f"⚠️ 경고: 다운로드된 파일이 너무 작습니다. 내용 일부: {content}")
+        except Exception:
+            pass
+            
     return save_path
 
 def upload_to_temp_storage(file_path):
@@ -47,7 +68,7 @@ def handler(job):
     if not media_url:
         return {"status": "error", "message": "media_url이 없습니다."}
 
-    # 1. 파일 다운로드
+    # 1. 파일 다운로드 (검증 로직 포함)
     input_file = "input_media.mp4"
     download_file(media_url, input_file)
 
