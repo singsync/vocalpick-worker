@@ -27,7 +27,6 @@ def upload_to_temp_storage(file_path):
             if res.status_code == 200:
                 data = res.json()
                 url = data['data']['url']
-                # 다이렉트 다운로드 링크로 변환
                 direct_url = url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
                 print(f"🔗 결과 파일 다운로드 URL 생성 완료: {direct_url}")
                 return direct_url
@@ -44,11 +43,7 @@ def handler(job):
     media_url = job_input.get("media_url")
     mode = job_input.get("mode", "video_full")
     reverb_ratio = job_input.get("reverb_ratio", 70)
-    height_pct = job_input.get("height_pct", 0.0)
-    title1 = job_input.get("title1", "")
-    title2 = job_input.get("title2", "")
-    title3 = job_input.get("title3", "")
-
+    
     if not media_url:
         return {"status": "error", "message": "media_url이 없습니다."}
 
@@ -75,7 +70,6 @@ def handler(job):
     # 4. Audio-Separator (UVR 보컬/반주 분리 실행)
     print("🎵 AI 보컬 및 반주 분리 모델 구동 중...")
     separator = Separator(output_dir=".")
-    # 고성능 UVR 모델 로드 (최고 음질 MDX-NET)
     separator.load_model('UVR-MDX-NET-Inst_HQ_3.onnx')
     output_audio_files = separator.separate(audio_input)
     
@@ -93,11 +87,10 @@ def handler(job):
     if not vocals_file and len(output_audio_files) > 1:
         vocals_file = output_audio_files[1]
 
-    # 5. 오디오 믹싱 및 마스터링 (울림 비율 반영)
+    # 5. 오디오 믹싱 및 마스터링
     mixed_audio = "final_mixed_audio.mp3"
     print(f"🎛️ 볼륨 및 울림(Reverb 비율: {reverb_ratio}%) 적용 마스터링 중...")
     
-    # 믹싱 볼륨 조절 (보컬을 조금 더 선명하게 돋구는 밸런스)
     if vocals_file and instrumental_file:
         subprocess.run([
             "ffmpeg", "-y", 
@@ -109,14 +102,13 @@ def handler(job):
     else:
         mixed_audio = audio_input
 
-    # 6. 최종 결과물 빌드 (MP3 음원 vs 풀영상 MP4)
+    # 6. 최종 결과물 빌드
     output_file_path = "final_output.mp4"
     if mode == "audio_only":
         output_mp3 = "final_output.mp3"
         subprocess.run(["ffmpeg", "-y", "-i", mixed_audio, "-b:a", "320k", output_mp3], check=True)
         output_file_path = output_mp3
     else:
-        # 비디오와 마스터링된 오디오 합치기
         print("🎬 최종 고화질/고음질 영상 렌더링 중...")
         subprocess.run([
             "ffmpeg", "-y", 
