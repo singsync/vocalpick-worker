@@ -24,4 +24,7 @@ WORKDIR /app
 # 핸들러 파일 및 소스코드를 컨테이너 안으로 복사
 COPY . .
 
+# 💡 [필수] 베이스 이미지의 기본 진입점(Nginx 등)을 초기화하여 서버리스 핸들러가 동작하도록 함
+ENTRYPOINT []
+
 CMD ["python3", "-u", "handler.py"]
