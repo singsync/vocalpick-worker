@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# 파이썬 AI 패키지 미리 설치 (부팅 시간 단축)
+# 파이썬 AI 패키지 미리 설치
 RUN pip install --no-cache-dir \
     audio-separator \
     pyloudnorm \
@@ -15,6 +15,9 @@ RUN pip install --no-cache-dir \
     soundfile \
     runpod \
     onnxruntime-gpu
+
+# 💡 [핵심] 이미지 빌드할 때 AI 모델을 미리 다운받아 컨테이너 안에 박아버림!
+RUN python3 -c "from audio_separator.separator import Separator; Separator().load_model('UVR-MDX-NET-Inst_HQ_3.onnx')"
 
 WORKDIR /app
 
